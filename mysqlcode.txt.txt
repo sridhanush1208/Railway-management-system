@@ -1,0 +1,587 @@
+ 
+-- 1. Users Table (with role)
+ 
+DROP TABLE IF EXISTS users;
+CREATE TABLE users (
+    userid      INT PRIMARY KEY AUTO_INCREMENT,
+    name        VARCHAR(100) NOT NULL,
+    email       VARCHAR(100) UNIQUE NOT NULL,
+    password    VARCHAR(255) NOT NULL,
+    role        ENUM('user','admin') DEFAULT 'user'
+) ENGINE=InnoDB;
+
+ 
+-- 2. Seat Class Helper Table
+ 
+DROP TABLE IF EXISTS seat_class;
+CREATE TABLE seat_class (
+    class_id   INT PRIMARY KEY AUTO_INCREMENT,
+    class_name ENUM('sleeper','3ac','2ac','firstclass') UNIQUE NOT NULL
+) ENGINE=InnoDB;
+
+INSERT IGNORE INTO seat_class (class_name)
+VALUES ('sleeper'), ('3ac'), ('2ac'), ('firstclass');
+
+ 
+-- 3. Trains Table
+--    defines capacity per class
+ 
+DROP TABLE IF EXISTS trains;
+CREATE TABLE trains (
+    trainid         INT PRIMARY KEY AUTO_INCREMENT,
+    train_name      VARCHAR(100) NOT NULL,
+    max_sleeper     INT         NOT NULL,
+    max_3ac         INT         NOT NULL,
+    max_2ac         INT         NOT NULL,
+    max_firstclass  INT         NOT NULL
+) ENGINE=InnoDB;
+
+ 
+-- 4. Seats Table
+--    current availability (initial = max)
+ 
+DROP TABLE IF EXISTS seats;
+CREATE TABLE seats (
+    trainid              INT PRIMARY KEY,
+    available_sleeper    INT NOT NULL,
+    available_3ac        INT NOT NULL,
+    available_2ac        INT NOT NULL,
+    available_firstclass INT NOT NULL,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE CASCADE
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+ 
+-- 5. Routes Table
+--    one route record per train
+ 
+DROP TABLE IF EXISTS routes;
+CREATE TABLE routes (
+    routeid     INT PRIMARY KEY AUTO_INCREMENT,
+    trainid     INT NOT NULL,
+    route_name  VARCHAR(100) COMMENT 'Descriptive name (optional)',
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE CASCADE
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+ 
+-- 6. Route Stops Table
+--    sequenced stops with timings
+ 
+DROP TABLE IF EXISTS route_stops;
+CREATE TABLE route_stops (
+    stopid         INT PRIMARY KEY AUTO_INCREMENT,
+    routeid        INT NOT NULL,
+    station_name   VARCHAR(50) NOT NULL,
+    stop_order     INT         NOT NULL COMMENT '1 = first, 2 = second, ...',
+    arrival_time   TIME        NOT NULL,
+    departure_time TIME        NULL COMMENT 'NULL if same as arrival or for terminus',
+    FOREIGN KEY (routeid) REFERENCES routes(routeid)
+      ON DELETE CASCADE
+      ON UPDATE CASCADE,
+    UNIQUE(routeid, stop_order),
+    UNIQUE(routeid, station_name, stop_order)
+) ENGINE=InnoDB;
+
+-- 7. Passengers Table
+--    high‑level booking info (excl. seat assignment)
+DROP TABLE IF EXISTS passengers;
+CREATE TABLE passengers (
+    passenger_id     INT PRIMARY KEY AUTO_INCREMENT,
+    name             VARCHAR(100) NOT NULL,
+    pnr              VARCHAR(30) NOT NULL UNIQUE,
+    email            VARCHAR(100),
+    concession_type  ENUM('student','senior citizen','disabled','none')
+                      DEFAULT 'none',
+    trainid          INT NOT NULL,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- 8. Tickets Table
+--    confirmed bookings with seat & coach
+DROP TABLE IF EXISTS tickets;
+CREATE TABLE tickets (
+    pnr          VARCHAR(30) PRIMARY KEY,
+    userid       INT NOT NULL,
+    trainid      INT NOT NULL,
+    class        ENUM('sleeper','3ac','2ac','firstclass') NOT NULL,
+    from_station VARCHAR(50),
+    to_station   VARCHAR(50),
+    status       ENUM('confirmed','cancelled') DEFAULT 'confirmed',
+    amount       DECIMAL(10,2) NOT NULL,
+    seat_no      INT,
+    coach_no     VARCHAR(10),
+    FOREIGN KEY (userid)  REFERENCES users(userid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- 9. RAC Table
+--    Reservation Against Cancellation
+DROP TABLE IF EXISTS rac;
+CREATE TABLE rac (
+    pnr           VARCHAR(30) PRIMARY KEY,
+    userid        INT NOT NULL,
+    trainid       INT NOT NULL,
+    class         ENUM('sleeper','3ac','2ac','firstclass') NOT NULL,
+    from_station  VARCHAR(50),
+    to_station    VARCHAR(50),
+    status        ENUM('active','cancelled') DEFAULT 'active',
+    amount        DECIMAL(10,2) NOT NULL,
+    rac_no        INT COMMENT 'RAC seat number (2 persons per RAC)',
+    FOREIGN KEY (userid)  REFERENCES users(userid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- 10. Waiting List Table
+DROP TABLE IF EXISTS waiting_list;
+CREATE TABLE waiting_list (
+    pnr                VARCHAR(30) PRIMARY KEY,
+    userid             INT NOT NULL,
+    trainid            INT NOT NULL,
+    class              ENUM('sleeper','3ac','2ac','firstclass') NOT NULL,
+    from_station       VARCHAR(50),
+    to_station         VARCHAR(50),
+    status             ENUM('active','cancelled') DEFAULT 'active',
+    amount             DECIMAL(10,2) NOT NULL,
+    waiting_list_no    INT COMMENT 'Position in waiting list',
+    FOREIGN KEY (userid)  REFERENCES users(userid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- 11. Refund Table
+--    records processed refunds
+DROP TABLE IF EXISTS refund;
+CREATE TABLE refund (
+    pnr            VARCHAR(30) PRIMARY KEY,
+    userid         INT NOT NULL,
+    trainid        INT NOT NULL,
+    refund_amount  DECIMAL(10,2) NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (userid)  REFERENCES users(userid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS payment;
+CREATE TABLE payment (
+    payment_id      INT PRIMARY KEY AUTO_INCREMENT,
+    pnr             VARCHAR(30) NOT NULL,
+    userid          INT NOT NULL,
+    trainid         INT NOT NULL,
+    amount          DECIMAL(10,2) NOT NULL,
+    payment_status  ENUM('Paid','Refunded') DEFAULT 'Paid',
+    payment_date    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (userid)  REFERENCES users(userid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE,
+    FOREIGN KEY (trainid) REFERENCES trains(trainid)
+      ON DELETE RESTRICT
+      ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+
+
+DELIMITER $$
+
+-- =======================================
+-- Booking Procedure: sp_book_ticket
+-- =======================================
+CREATE PROCEDURE sp_book_ticket(
+    IN p_userid INT,
+    IN p_trainid INT,
+    IN p_class VARCHAR(20),
+    IN p_from_station VARCHAR(50),
+    IN p_to_station VARCHAR(50),
+    IN p_passenger_name VARCHAR(100),
+    IN p_email VARCHAR(100),
+    IN p_concession VARCHAR(50)
+)
+BEGIN
+    DECLARE seat_available INT DEFAULT 0;
+    DECLARE base_fare DECIMAL(10,2) DEFAULT 0;
+    DECLARE journey_factor DECIMAL(10,2) DEFAULT 1;
+    DECLARE discount_rate DECIMAL(4,2) DEFAULT 0;
+    DECLARE final_amount DECIMAL(10,2);
+    DECLARE pnr_val VARCHAR(40);
+
+    DECLARE rac_count INT DEFAULT 0;
+    DECLARE wl_count INT DEFAULT 0;
+    DECLARE waiting_list_no INT DEFAULT 0;  
+
+    -- Variables for confirmed seat assignment.
+    DECLARE capacity INT DEFAULT 0;
+    DECLARE new_available INT DEFAULT 0;
+    DECLARE seat_assigned INT DEFAULT 0;
+    DECLARE coach_assigned VARCHAR(10);
+
+    -- Variable for RAC assignment.
+    DECLARE rac_no INT DEFAULT 0;
+
+    -- Maximum allowed RAC passengers per class.
+    DECLARE max_rac INT DEFAULT 0;
+    
+    -- Determine maximum RAC capacity based on class.
+    IF p_class = 'firstclass' THEN
+        SET max_rac = 6;
+    ELSEIF p_class = '2ac' THEN
+        SET max_rac = 10;
+    ELSEIF p_class = '3ac' THEN
+        SET max_rac = 14;
+    ELSEIF p_class = 'sleeper' THEN
+        SET max_rac = 20;
+    ELSE
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid class provided';
+    END IF;
+
+    -- Generate unique PNR.
+    SET pnr_val = CONCAT('PNR', p_trainid, UNIX_TIMESTAMP(), FLOOR(RAND()*1000));
+
+    -- Determine base fare per class.
+    IF p_class = 'sleeper' THEN
+        SET base_fare = 100;
+    ELSEIF p_class = '3ac' THEN
+        SET base_fare = 200;
+    ELSEIF p_class = '2ac' THEN
+        SET base_fare = 300;
+    ELSEIF p_class = 'firstclass' THEN
+        SET base_fare = 400;
+    END IF;
+
+    -- Calculate amount and apply concession discount.
+    SET final_amount = base_fare * journey_factor;
+    IF p_concession = 'student' THEN
+        SET discount_rate = 0.20;
+    ELSEIF p_concession = 'senior citizen' THEN
+        SET discount_rate = 0.40;
+    ELSEIF p_concession = 'disabled' THEN
+        SET discount_rate = 0.60;
+    ELSE
+        SET discount_rate = 0;
+    END IF;
+    SET final_amount = final_amount * (1 - discount_rate);
+
+    -- Check confirmed seat availability.
+    IF p_class = 'sleeper' THEN
+        SELECT available_sleeper INTO seat_available FROM seats WHERE trainid = p_trainid;
+    ELSEIF p_class = '3ac' THEN
+        SELECT available_3ac INTO seat_available FROM seats WHERE trainid = p_trainid;
+    ELSEIF p_class = '2ac' THEN
+        SELECT available_2ac INTO seat_available FROM seats WHERE trainid = p_trainid;
+    ELSEIF p_class = 'firstclass' THEN
+        SELECT available_firstclass INTO seat_available FROM seats WHERE trainid = p_trainid;
+    END IF;
+
+    IF seat_available IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Seat availability not found for given train/class';
+    END IF;
+
+    START TRANSACTION;
+    
+    IF seat_available > 0 THEN
+        -- Confirmed booking: update seat availability.
+        IF p_class = 'sleeper' THEN
+            UPDATE seats SET available_sleeper = available_sleeper - 1 WHERE trainid = p_trainid;
+            SELECT available_sleeper INTO new_available FROM seats WHERE trainid = p_trainid;
+            SELECT max_sleeper INTO capacity FROM trains WHERE trainid = p_trainid;
+        ELSEIF p_class = '3ac' THEN
+            UPDATE seats SET available_3ac = available_3ac - 1 WHERE trainid = p_trainid;
+            SELECT available_3ac INTO new_available FROM seats WHERE trainid = p_trainid;
+            SELECT max_3ac INTO capacity FROM trains WHERE trainid = p_trainid;
+        ELSEIF p_class = '2ac' THEN
+            UPDATE seats SET available_2ac = available_2ac - 1 WHERE trainid = p_trainid;
+            SELECT available_2ac INTO new_available FROM seats WHERE trainid = p_trainid;
+            SELECT max_2ac INTO capacity FROM trains WHERE trainid = p_trainid;
+        ELSEIF p_class = 'firstclass' THEN
+            UPDATE seats SET available_firstclass = available_firstclass - 1 WHERE trainid = p_trainid;
+            SELECT available_firstclass INTO new_available FROM seats WHERE trainid = p_trainid;
+            SELECT max_firstclass INTO capacity FROM trains WHERE trainid = p_trainid;
+        END IF;
+
+        IF capacity IS NULL OR new_available IS NULL THEN
+            ROLLBACK;
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Could not retrieve seat capacity or availability';
+        END IF;
+
+        -- Compute confirmed seat assignment.
+        SET seat_assigned = capacity - new_available;
+        IF seat_assigned <= 50 THEN
+            SET coach_assigned = 'A';
+        ELSEIF seat_assigned <= 100 THEN
+            SET coach_assigned = 'B';
+        ELSEIF seat_assigned <= 150 THEN
+            SET coach_assigned = 'C';
+        ELSE
+            SET coach_assigned = 'D';
+        END IF;
+
+        INSERT INTO tickets (pnr, userid, trainid, class, from_station, to_station, status, amount, seat_no, coach_no)
+        VALUES (pnr_val, p_userid, p_trainid, p_class, p_from_station, p_to_station, 'confirmed', final_amount, seat_assigned, coach_assigned);
+
+        INSERT INTO payment (pnr, userid, trainid, amount, payment_status)
+        VALUES (pnr_val, p_userid, p_trainid, final_amount, 'Paid');
+    ELSE
+        -- No confirmed seat available: RAC or WL.
+        SELECT COUNT(*) INTO rac_count FROM rac WHERE trainid = p_trainid AND class = p_class;
+        IF rac_count < max_rac THEN
+            SET rac_no = FLOOR(rac_count / 2) + 1;
+            INSERT INTO rac (pnr, userid, trainid, class, from_station, to_station, status, amount, rac_no)
+            VALUES (pnr_val, p_userid, p_trainid, p_class, p_from_station, p_to_station, 'active', final_amount, rac_no);
+        ELSE
+            SELECT COUNT(*) INTO wl_count FROM waiting_list WHERE trainid = p_trainid AND class = p_class;
+            SET waiting_list_no = wl_count + 1;
+            INSERT INTO waiting_list (pnr, userid, trainid, class, from_station, to_station, status, amount, waiting_list_no)
+            VALUES (pnr_val, p_userid, p_trainid, p_class, p_from_station, p_to_station, 'active', final_amount, waiting_list_no);
+        END IF;
+    END IF;
+
+    -- Insert passenger record.
+    INSERT INTO passengers (name, pnr, email, concession_type, trainid)
+    VALUES (p_passenger_name, pnr_val, p_email, p_concession, p_trainid);
+
+    COMMIT;
+
+    SELECT pnr_val AS BookingPNR, final_amount AS Amount;
+END$$
+
+
+-- =======================================
+-- Cancellation Procedure: sp_cancel_ticket
+--    (refunds = 80% of original fare)
+-- =======================================
+CREATE PROCEDURE sp_cancel_ticket(
+    IN p_pnr VARCHAR(30)
+)
+BEGIN
+    DECLARE booked_trainid INT;
+    DECLARE booked_class VARCHAR(20);
+    DECLARE booked_amount DECIMAL(10,2);
+    DECLARE booked_userid INT;
+    
+    DECLARE rac_pnr VARCHAR(30);
+    DECLARE rac_userid INT;
+    DECLARE rac_amount DECIMAL(10,2);
+    DECLARE rac_class VARCHAR(20);
+    DECLARE rac_from VARCHAR(50);
+    DECLARE rac_to VARCHAR(50);
+    DECLARE rac_no INT;
+    
+    DECLARE wl_pnr VARCHAR(30);
+    DECLARE wl_userid INT;
+    DECLARE wl_amount DECIMAL(10,2);
+    DECLARE wl_class VARCHAR(20);
+    DECLARE wl_from VARCHAR(50);
+    DECLARE wl_to VARCHAR(50);
+    DECLARE waiting_list_no INT;
+    
+    DECLARE new_available INT DEFAULT 0;
+    DECLARE capacity INT DEFAULT 0;
+    DECLARE seat_assigned INT DEFAULT 0;
+    DECLARE coach_assigned VARCHAR(10);
+    
+    DECLARE rac_count INT DEFAULT 0;
+    
+    START TRANSACTION;
+    
+    -- 1) Confirmed ticket cancellation
+    IF EXISTS (SELECT 1 FROM tickets WHERE pnr = p_pnr) THEN
+        SELECT trainid, class, amount, userid
+          INTO booked_trainid, booked_class, booked_amount, booked_userid
+          FROM tickets WHERE pnr = p_pnr;
+        
+        DELETE FROM tickets WHERE pnr = p_pnr;
+        
+        -- Restore seat availability
+        IF booked_class = 'sleeper' THEN
+            UPDATE seats SET available_sleeper = available_sleeper + 1 WHERE trainid = booked_trainid;
+        ELSEIF booked_class = '3ac' THEN
+            UPDATE seats SET available_3ac = available_3ac + 1 WHERE trainid = booked_trainid;
+        ELSEIF booked_class = '2ac' THEN
+            UPDATE seats SET available_2ac = available_2ac + 1 WHERE trainid = booked_trainid;
+        ELSEIF booked_class = 'firstclass' THEN
+            UPDATE seats SET available_firstclass = available_firstclass + 1 WHERE trainid = booked_trainid;
+        END IF;
+        
+        -- Refund 80%
+        INSERT INTO refund (pnr, userid, trainid, refund_amount)
+        VALUES (p_pnr, booked_userid, booked_trainid, booked_amount * 0.8);
+        
+        -- Promote earliest RAC to confirmed...
+        IF EXISTS (
+            SELECT 1
+              FROM rac
+             WHERE trainid = booked_trainid
+               AND class   = booked_class
+             ORDER BY pnr
+             LIMIT 1
+        ) THEN
+            SELECT pnr, userid, amount, class, from_station, to_station, rac_no
+              INTO rac_pnr, rac_userid, rac_amount, rac_class, rac_from, rac_to, rac_no
+              FROM rac
+             WHERE trainid = booked_trainid
+               AND class   = booked_class
+             ORDER BY pnr
+             LIMIT 1;
+            
+            DELETE FROM rac WHERE pnr = rac_pnr;
+            
+            -- Allocate seat to RAC passenger
+            IF booked_class = 'sleeper' THEN
+                UPDATE seats SET available_sleeper = available_sleeper - 1 WHERE trainid = booked_trainid;
+                SELECT available_sleeper INTO new_available FROM seats WHERE trainid = booked_trainid;
+                SELECT max_sleeper     INTO capacity      FROM trains WHERE trainid = booked_trainid;
+            ELSEIF booked_class = '3ac' THEN
+                UPDATE seats SET available_3ac = available_3ac - 1 WHERE trainid = booked_trainid;
+                SELECT available_3ac     INTO new_available FROM seats WHERE trainid = booked_trainid;
+                SELECT max_3ac         INTO capacity      FROM trains WHERE trainid = booked_trainid;
+            ELSEIF booked_class = '2ac' THEN
+                UPDATE seats SET available_2ac = available_2ac - 1 WHERE trainid = booked_trainid;
+                SELECT available_2ac     INTO new_available FROM seats WHERE trainid = booked_trainid;
+                SELECT max_2ac         INTO capacity      FROM trains WHERE trainid = booked_trainid;
+            ELSE
+                UPDATE seats SET available_firstclass = available_firstclass - 1 WHERE trainid = booked_trainid;
+                SELECT available_firstclass INTO new_available FROM seats WHERE trainid = booked_trainid;
+                SELECT max_firstclass     INTO capacity      FROM trains WHERE trainid = booked_trainid;
+            END IF;
+            
+            SET seat_assigned = capacity - new_available;
+            IF seat_assigned <= 50 THEN
+                SET coach_assigned = 'A';
+            ELSEIF seat_assigned <= 100 THEN
+                SET coach_assigned = 'B';
+            ELSEIF seat_assigned <= 150 THEN
+                SET coach_assigned = 'C';
+            ELSE
+                SET coach_assigned = 'D';
+            END IF;
+            
+            INSERT INTO tickets (pnr, userid, trainid, class, from_station, to_station, status, amount, seat_no, coach_no)
+            VALUES (rac_pnr, rac_userid, booked_trainid, rac_class, rac_from, rac_to, 'confirmed', rac_amount, seat_assigned, coach_assigned);
+            
+            INSERT INTO payment (pnr, userid, trainid, amount, payment_status)
+            VALUES (rac_pnr, rac_userid, booked_trainid, rac_amount, 'Paid');
+            
+            -- Then promote WL → RAC if capacity allows
+            SELECT COUNT(*) INTO rac_count
+              FROM rac
+             WHERE trainid = booked_trainid
+               AND class   = booked_class;
+            
+            IF EXISTS (
+                SELECT 1
+                  FROM waiting_list
+                 WHERE trainid = booked_trainid
+                   AND class   = booked_class
+                 ORDER BY pnr
+                 LIMIT 1
+            )
+            AND rac_count < (
+                CASE booked_class
+                    WHEN 'firstclass' THEN 6
+                    WHEN '2ac'        THEN 10
+                    WHEN '3ac'        THEN 14
+                    WHEN 'sleeper'    THEN 20
+                    ELSE 0
+                END
+            ) THEN
+                SELECT pnr, userid, amount, class, from_station, to_station
+                  INTO wl_pnr, wl_userid, wl_amount, wl_class, wl_from, wl_to
+                  FROM waiting_list
+                 WHERE trainid = booked_trainid
+                   AND class   = booked_class
+                 ORDER BY pnr
+                 LIMIT 1;
+                
+                DELETE FROM waiting_list WHERE pnr = wl_pnr;
+                
+                SET rac_no = FLOOR(rac_count / 2) + 1;
+                INSERT INTO rac (pnr, userid, trainid, class, from_station, to_station, status, amount, rac_no)
+                VALUES (wl_pnr, wl_userid, booked_trainid, wl_class, wl_from, wl_to, 'active', wl_amount, rac_no);
+            END IF;
+        END IF;
+
+    -- 2) RAC cancellation branch
+    ELSEIF EXISTS (SELECT 1 FROM rac WHERE pnr = p_pnr) THEN
+        SELECT trainid, amount, userid, class
+          INTO booked_trainid, booked_amount, booked_userid, booked_class
+          FROM rac WHERE pnr = p_pnr;
+        
+        DELETE FROM rac WHERE pnr = p_pnr;
+        
+        -- Refund 80%
+        INSERT INTO refund (pnr, userid, trainid, refund_amount)
+        VALUES (p_pnr, booked_userid, booked_trainid, booked_amount * 0.8);
+        
+        -- Promote WL → RAC if any
+        IF EXISTS (
+            SELECT 1
+              FROM waiting_list
+             WHERE trainid = booked_trainid
+               AND class   = booked_class
+             ORDER BY pnr
+             LIMIT 1
+        ) THEN
+            SELECT pnr, userid, amount, class, from_station, to_station
+              INTO wl_pnr, wl_userid, wl_amount, wl_class, wl_from, wl_to
+              FROM waiting_list
+             WHERE trainid = booked_trainid
+               AND class   = booked_class
+             ORDER BY pnr
+             LIMIT 1;
+            
+            DELETE FROM waiting_list WHERE pnr = wl_pnr;
+            
+            SELECT COUNT(*) INTO rac_count
+              FROM rac
+             WHERE trainid = booked_trainid
+               AND class   = booked_class;
+            SET rac_no = FLOOR(rac_count / 2) + 1;
+            INSERT INTO rac (pnr, userid, trainid, class, from_station, to_station, status, amount, rac_no)
+            VALUES (wl_pnr, wl_userid, booked_trainid, wl_class, wl_from, wl_to, 'active', wl_amount, rac_no);
+        END IF;
+
+    -- 3) Waiting-list cancellation
+    ELSEIF EXISTS (SELECT 1 FROM waiting_list WHERE pnr = p_pnr) THEN
+        SELECT trainid, amount, userid, class
+          INTO booked_trainid, booked_amount, booked_userid, booked_class
+          FROM waiting_list WHERE pnr = p_pnr;
+        
+        DELETE FROM waiting_list WHERE pnr = p_pnr;
+        
+        -- Refund 80%
+        INSERT INTO refund (pnr, userid, trainid, refund_amount)
+        VALUES (p_pnr, booked_userid, booked_trainid, booked_amount * 0.8);
+
+    ELSE
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'PNR not found in any booking category';
+    END IF;
+    
+    -- Remove passenger record
+    DELETE FROM passengers WHERE pnr = p_pnr;
+    
+    COMMIT;
+    
+    SELECT 'Cancellation successful' AS Result;
+END$$
+
+DELIMITER ;
+
+
